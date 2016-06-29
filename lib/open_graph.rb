@@ -5,6 +5,13 @@ require 'uri'
 
 class OpenGraph
   attr_accessor :src, :url, :type, :title, :description, :images, :metadata, :response, :original_images
+  META_TAG_REGEX = /^\<meta.*\>$/
+  META_PROPERTY_REGEX = /property=\"og:([a-zA-Z]*)\"/
+  META_CONTENT_REGEX = /content=\"([^"]*)\"/
+  TITLE_REGEX = /\<title\>(.*)\<\/title\>/
+  IMG_TAG_REGEX = /(img [^\>]*)/
+  IMG_SRC_REGEX = /src=\"([^"]*)\"/
+
 
   def initialize(src, fallback = true, options = {})
     if fallback.is_a? Hash
@@ -80,10 +87,10 @@ class OpenGraph
 
   def parse_metadata_as_string
     attrs_list = %w(title url type description)
-    @body.scan(/^\<meta.*\>$/) do |m|
-      property = m.scan(/property=\"og:([a-zA-Z]*)\"/).flatten.first
+    @body.scan(META_TAG_REGEX) do |m|
+      property = m.scan(META_PROPERTY_REGEX).flatten.first
       next unless (attrs_list + ['image']).include?(property)
-      value = m.scan(/content=\"([^"]*)\"/).flatten.first
+      value = m.scan(META_CONTENT_REGEX).flatten.first
       @metadata = add_metadata(@metadata, property, value)
       case property
         when *attrs_list
@@ -95,9 +102,9 @@ class OpenGraph
   end
 
   def parse_body_as_string_fallback
-    @title = @body.scan(/\<title\>(.*)\<\/title\>/).flatten.first
-    @body.scan(/(img [^\>]*)/).flatten.each do |m|
-      src = m.scan(/src=\"([^"]*)\"/).flatten.first
+    @title = @body.scan(TITLE_REGEX).flatten.first
+    @body.scan(IMG_TAG_REGEX).flatten.each do |m|
+      src = m.scan(IMG_SRC_REGEX).flatten.first
       add_image(src)
     end
   end
