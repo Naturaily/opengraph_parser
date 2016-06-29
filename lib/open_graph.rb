@@ -5,6 +5,13 @@ require 'uri'
 
 class OpenGraph
   attr_accessor :src, :url, :type, :title, :description, :images, :metadata, :response, :original_images
+  META_TAG_REGEX = /^\<meta.*\>$/
+  META_PROPERTY_REGEX = /property=\"og:([a-zA-Z]*)\"/
+  META_CONTENT_REGEX = /content=\"([^"]*)\"/
+  TITLE_REGEX = /\<title\>(.*)\<\/title\>/
+  IMG_TAG_REGEX = /(img [^\>]*)/
+  IMG_SRC_REGEX = /src=\"([^"]*)\"/
+
 
   def initialize(src, fallback = true, options = {})
     if fallback.is_a? Hash
@@ -29,8 +36,7 @@ class OpenGraph
         @body = RedirectFollower.new(@src, options).resolve.body
       end
     rescue
-      @title = @url = @src
-      return
+      @body = Net::HTTP.get(URI.parse(@src))
     end
 
     if @body
@@ -49,13 +55,15 @@ class OpenGraph
           end
         end
       end
+      parse_metadata_as_string if @metadata.empty?
+    else
+      @title = @url = @src
     end
   end
 
   def load_fallback
     if @body
       doc = Nokogiri.parse(@body)
-
       if @title.to_s.empty? && doc.xpath("//head//title").size > 0
         @title = doc.xpath("//head//title").first.text.to_s.strip
       end
@@ -72,6 +80,32 @@ class OpenGraph
 
       fetch_images(doc, "//head//link[@rel='image_src']", "href") if @images.empty?
       fetch_images(doc, "//img", "src") if @images.empty?
+
+      parse_body_as_string_fallback if @title.blank? && @images.blank?
+    end
+  end
+
+  def parse_metadata_as_string
+    attrs_list = %w(title url type description)
+    @body.scan(META_TAG_REGEX) do |m|
+      property = m.scan(META_PROPERTY_REGEX).flatten.first
+      next unless (attrs_list + ['image']).include?(property)
+      value = m.scan(META_CONTENT_REGEX).flatten.first
+      @metadata = add_metadata(@metadata, property, value)
+      case property
+        when *attrs_list
+          self.instance_variable_set("@#{property}", value) unless value.blank?
+        when "image"
+          add_image(value)
+      end
+    end
+  end
+
+  def parse_body_as_string_fallback
+    @title = @body.scan(TITLE_REGEX).flatten.first
+    @body.scan(IMG_TAG_REGEX).flatten.each do |m|
+      src = m.scan(IMG_SRC_REGEX).flatten.first
+      add_image(src)
     end
   end
 
@@ -81,13 +115,18 @@ class OpenGraph
     imgs = @images.dup
     @images = []
     imgs.each do |img|
-      if Addressable::URI.parse(img).host.nil?
-        full_path = uri.join(img).to_s
-        add_image(full_path)
-      else
-        add_image(img)
+      begin
+        if Addressable::URI.parse(img).host.nil?
+          full_path = uri.join(img).to_s
+          add_image(full_path)
+        else
+          add_image(img)
+        end
+      rescue Addressable::URI::InvalidURIError
+        next
       end
     end
+
   end
 
   def add_image(image_url)
